@@ -102,3 +102,118 @@ model_results |>
   theme(axis.text.x = element_text(angle = 90, hjust = 1))
 ```
 
+### Problem 2
+
+#### Import data
+
+```{r}
+# Download the Central Park weather data
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2022-01-01",
+    date_max = "2022-12-31") |>
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) |>
+  select(name, id, everything())
+```
+
+The boostrap is helpful when you’d like to perform inference for a parameter / value / summary that doesn’t have an easy-to-write-down distribution in the usual repeated sampling framework. We’ll focus on a simple linear regression with `tmax` as the response with `tmin` and `prcp` as the predictors, and are interested in the distribution of two quantities estimated from these data:
+
+* r̂2
+* log(β̂1∗β̂2)
+
+Use 5000 bootstrap samples and, for each bootstrap sample, produce estimates of these two quantities. Plot the distribution of your estimates, and describe these in words. Using the 5000 bootstrap estimates, identify the 2.5% and 97.5% quantiles to provide a 95% confidence interval for r̂2 and log(β̂1∗β̂2). Note: `broom::glance()` is helpful for extracting r̂2 from a fitted regression, and `broom::tidy()` (with some additional wrangling) should help in computing log(β̂1∗β̂2).
+
+#### Use bootstrap samples to  produce estimates 
+
+```{r}
+boot_strap_df = 
+  weather_df |> 
+  modelr::bootstrap(n = 5000) |> 
+  mutate(
+    models = map(strap, \(df) lm(tmax ~ tmin + prcp, data = df))) 
+ 
+
+r_squared_df = 
+  boot_strap_df |>
+  mutate(results = map(models, broom::glance)) |>
+  select(-strap, -models) |>
+  unnest(results)
+
+log_beta_df = 
+  boot_strap_df |>
+  mutate(results = map(models, broom::tidy)) |>
+  select(-strap, -models) |>
+  unnest(results) |>
+  select(.id, term, estimate) |>
+  pivot_wider(
+    names_from = term,
+    values_from = estimate
+  ) |>
+  mutate(log_beta_pro = log(tmin * prcp))
+
+r_squared_result = 
+  r_squared_df |>
+  summarize(r_squared_estimate = mean(r.squared))
+
+log_b1b2_result = 
+  log_beta_df|>
+  summarize(log_b1b2_estimate = mean(log_beta_pro, na.rm = TRUE))
+
+r_squared_result |>
+  knitr::kable()
+
+log_b1b2_result |>
+  knitr::kable()
+```
+
+* Comment:For log(β1*β2), there are 3329 non-finite values, and calculation of parameter statistics is performed on the non-NA values.
+
+#### Plot the distribution of your estimates
+
+```{r}
+# Distribution of r squared estimates
+r_squared_df |>
+  ggplot(aes(x = r.squared)) +
+  geom_density() +
+  labs(
+    title = "Distribution of Estimated R Squared" ,x = "R Squared Estimates")
+```
+
+* Describe the plot: The distribution is approximately normal distribution and left-skewed. We observe that r^2 values are close to 0.92, indicating a strong linear relationship. This suggests that both 'tmin' and 'prcp' serve as reliable indicators of 'tmax'.
+
+```{r}
+# Distribution of log(b1b2) estimates
+log_beta_df |>
+  na.omit() |>
+  ggplot(aes(x = log_beta_pro)) +
+  geom_density() +
+  labs(title = "Distribution of Estimated log(beta1*beta2)", x = "log(beta1*beta2)")
+```
+
+<mark>* Describe the plot:
+
+#### Provide a 95% confidence interval 
+
+```{r}
+r_squared_df |>
+  summarize(
+    r2_CI_lower = quantile(r.squared, 0.025),
+    r2_CI_upper = quantile(r.squared, 0.975)
+  ) |>
+  knitr::kable()
+```
+
+```{r}
+log_beta_df |>
+  na.omit() |>
+  summarize(
+    log_b1b2_CI_lower = quantile(log_beta_pro, 0.025),
+    log_b1b2_CI_upper = quantile(log_beta_pro, 0.975)) |>
+  knitr::kable()
+```
+
