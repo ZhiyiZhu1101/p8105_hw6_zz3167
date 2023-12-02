@@ -195,7 +195,7 @@ log_beta_df |>
   labs(title = "Distribution of Estimated log(beta1*beta2)", x = "log(beta1*beta2)")
 ```
 
-<mark>* Describe the plot:
+* Describe the plot: The distribution is concentrated near -5 but has a heavy tail extending to low values, which may be related to the outliers included in the bootstrap sample.
 
 #### Provide a 95% confidence interval 
 
@@ -216,4 +216,154 @@ log_beta_df |>
     log_b1b2_CI_upper = quantile(log_beta_pro, 0.975)) |>
   knitr::kable()
 ```
+
+### Problem 3
+
+#### Load and clean the data
+
+```{r}
+#load and clean data
+birth_weight = 
+  read_csv("data/birthweight.csv") |>
+  janitor::clean_names() |> 
+  mutate(
+    babysex = case_match(
+      babysex,
+      1 ~ 'male',
+      2 ~ 'female'),
+    frace = case_match(
+      frace, 
+      1 ~ "White", 
+      2 ~ "Black", 
+      3 ~ "Asian", 
+      4 ~ "Puerto Rican", 
+      8 ~ "Other", 
+      9 ~ "Unknown"),
+    malform = case_match(
+      malform, 
+      0 ~ 'absent',
+      1 ~ 'present'),
+    mrace = case_match(
+      mrace, 
+      1 ~ "White", 
+      2 ~ "Black", 
+      3 ~ "Asian", 
+      4 ~ "Puerto Rican", 
+      8 ~ "Other"))
+
+# check NAs
+sum(is.na(birth_weight))
+```
+
+There’s no missing values in this dataset.
+
+#### Propose a regression model for birthweight
+
+```{r}
+full_model = 
+  lm(bwt ~ ., data = birth_weight) 
+
+full_model |>
+  broom::tidy() |>
+  knitr::kable() 
+
+stepwise_model = 
+  full_model |>
+  MASS::stepAIC(direction = "backward", trace = FALSE)
+
+stepwise_model |>
+  broom::tidy() |>
+  knitr::kable()
+```
+
+* Describe modeling process: First, I fit a linear model with all the other variables as predictors. Then, using `stepwiseAIC` function to perform stepwise model selection based on the full model. From the result table, the selected predictors are: `babysex`, `bhead`, `blength`, `delwt`, `fincome`, `gaweeks`, `mheight`, `mrace`, `parity`, `ppwt`, `smoken`.
+
+#### Show a plot of model residuals against fitted values 
+
+```{r}
+birth_weight |> 
+    add_predictions(stepwise_model) |> 
+    add_residuals(stepwise_model) |> 
+    ggplot(aes(x = pred, y = resid)) +
+    geom_point()  + 
+    geom_smooth(method = "lm",se = FALSE) + 
+    labs(title = "Residuals versus Fitted Values", 
+       x = "Predictions", 
+       y = "Residuals")
+```
+
+#### Compare your model to two others:
+
+* One using length at birth and gestational age as predictors (main effects only)
+* One using head circumference, length, sex, and all interactions (including the three-way interaction) between these
+
+```{r}
+model_1 = lm(bwt ~ blength + gaweeks, data = birth_weight)
+
+model_1 |>
+  broom::tidy() |>
+  knitr::kable()
+```
+
+```{r}
+model_2 = lm(bwt ~ bhead * blength * babysex, data = birth_weight)
+
+model_2 |>
+  broom::tidy() |>
+  knitr::kable()
+```
+
+* Make this comparison in terms of the cross-validated prediction error
+
+```{r}
+cv_df =
+  crossv_mc(birth_weight, 100) |>
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble))
+
+compare_df = 
+  cv_df |>
+  mutate(
+    model_0  = map(train, ~lm(bwt ~ babysex + bhead + blength + delwt + fincome + gaweeks + mheight + mrace + parity + ppwt + smoken, data = .x)),
+    model_1  = map(train, ~lm(bwt ~ gaweeks + blength, data = .x)),
+    model_2  = map(train, ~lm(bwt ~ bhead*blength*babysex, data = .x))) |>
+  mutate(
+    rmse_0 = map2_dbl(model_0, test, ~rmse(model = .x, data = .y)),
+    rmse_1 = map2_dbl(model_1, test, ~rmse(model = .x, data = .y)),
+    rmse_2 = map2_dbl(model_2, test, ~rmse(model = .x, data = .y))) 
+
+compare_df |>
+  summarize(
+    mean_rmse_0 = mean(rmse_0),
+    mean_rmse_1 = mean(rmse_1),
+    mean_rmse_2  = mean(rmse_2)
+  ) |>
+  knitr::kable()
+```
+
+```{r}
+compare_df |>
+  select(starts_with("rmse")) |>
+  mutate(
+    model_0 = rmse_0,
+    model_1 = rmse_1,
+    model_2 = rmse_2
+  ) |>
+  pivot_longer(
+    model_0:model_2,
+    names_to = "model",
+    values_to = "rmse"
+  ) |>
+  ggplot(aes(x = model, y = rmse)) +
+  geom_violin(aes(fill = model)) +
+  labs(
+    title = "RMSE of 3 Different Models"
+  )
+```
+
+* Comment: From the plot, we could conclude that model_0 (which construct using stepwiseAIC) has the smallest RMSE. The model_1 (using `gaweeks` and `blength` as predictors) has the largest RMSE. It indicates that model_0 is the most reliable one to fit.
+
+
+
 
